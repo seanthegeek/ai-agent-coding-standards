@@ -13,3 +13,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `templates/CLAUDE.md` — Claude Code wrapper that includes `AGENTS.md`
 - `README.md` — overview and usage instructions
 - `LICENSE` — MIT
+- `.vscode/settings.json` — cSpell dictionary for project-specific terms
