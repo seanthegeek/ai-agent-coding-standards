@@ -27,7 +27,8 @@ These rules apply to anyone — human or agent — making changes to this repo. 
 - Type annotations use `TypedDict` for structured results
 - Supports all currently supported Python versions
 - Modern type annotations across the entire project
--Testing framework: **pytest**
+  - Always use the the latest version of pywright for static type checking
+- Testing framework: **pytest**
 - Every bit of code should have a test
 - Build backend: **hatchling**
 - Module-level loggers: `logger = logging.getLogger(__name__)` — one logger per module, named for the module
