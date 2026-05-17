@@ -23,6 +23,8 @@ These rules apply to anyone — human or agent — making changes to this repo. 
 
 ## Python Code Style
 
+These standards appply to ALL project Python code **including tests**.
+
 - Formatter/linter: **Ruff**
 - Type annotations use `TypedDict` for structured results
 - Supports all currently supported Python versions
