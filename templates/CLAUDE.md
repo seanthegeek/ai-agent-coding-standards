@@ -13,4 +13,3 @@ Any new feature or modification to an existing feature must follow this model sp
 **PR reviews** must also use Fable, with Opus as the fallback if Fable is unavailable.
 
 @AGENTS.md
-
