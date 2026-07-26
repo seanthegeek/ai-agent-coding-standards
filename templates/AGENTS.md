@@ -21,14 +21,56 @@ These rules apply to anyone — human or agent — making changes to this repo. 
 - **SDK research order: installed source, then vendor docs, then GitHub issues.** When figuring out how a vendor SDK behaves, the installed SDK's source is the source of truth, vendor documentation is second, GitHub issues are third (for known bugs and undocumented behavior). Third-party blogs, Stack Overflow answers, and AI-generated explainers are not primary evidence — at best they are pointers to one of the three primary sources.
 - **Don't catch `Exception` broadly.** Catch only the specific exception types you have a recovery path for. A bare `except Exception:` (or `except:`) hides programming errors that should be loud, makes debugging harder, and disguises broken assumptions as transient failures. Let unexpected exceptions propagate.
 
-## Testing and review
+## Testing
 
-- **Before opening a pull request, have the final diff reviewed by a reader with no authoring context** — a fresh agent session or another person, given only the diff. Ask "do these changes agree with *each other*?", not just "is each change correct?". An author re-reading their own work tends to confirm the mental model that produced it, so defects hide in the relations between two individually-correct places: code vs. its docs, the write side vs. the read side, a claim vs. the full set of things it covers.
-- **Update tracking state only after the action it tracks has succeeded.** When code clears a counter, marks something done, or advances a cursor around an action that can fail (a file move, a write, a network call), do the update after the action succeeds — then walk each failure branch and ask what the state means if the action fails right there. Reviews reliably verify that cleanup *exists*; they miss *when* it runs.
-- **If something can report failure two ways, handle both ways the same.** A function that signals failure by return value in one configuration and by raised exception in another must run the same cleanup and safety logic on both paths. Find every place that raises, not just every place that returns — and remember that what happens to a raised exception depends on every caller it can propagate through.
 - **A test named for an exclusive claim must prove both halves.** "Only", "never", and "exactly once" each assert a negative as well as a positive. If the shared test setup can't observe the negative half, build a fresh setup for it instead of substituting a nearby assertion that always passes.
 - **Prove a regression test by running it against the unfixed code.** A test written alongside a bug fix must fail when the fix is reverted; otherwise it guards nothing.
 - **When testing end-to-end, confirm you are running the edited code.** Running a package from outside the project directory can silently resolve an older installed copy; check the module's file path (or the paths in a traceback) before trusting the result — an old copy can convincingly reproduce the exact bug you are fixing.
+
+## Review discipline
+
+These rules were distilled from real multi-agent review cycles in which defects survived thorough author-side review — in later cycles, a fresh-context diff review as well. Each one names a pattern that self-review reliably misses. Grouped by theme.
+
+### Review prose as prose
+
+A review that only verifies functional correctness (tests pass, files import, types check) sails past exactly the defects a text-first reviewer catches.
+
+- **Whole-file regenerated artifacts put every line in the diff — review them as text, too.** Re-exporting a dashboard definition or other generated document rewrites the entire file, so pre-existing user-facing strings are formally part of the change; a semantic before/after comparison deliberately looks through them. Add a text-level pass over titles, labels, and markdown.
+- **Proofread the whole hunk and the *rendered* text, not just the `+`/`-` lines.** Typos one line away from an edit are in your context window and fair game, and wrap points interact with markers and punctuation (a comment marker landing before an issue number, a trailing hyphen, a code span split across lines) — reflow rather than argue the raw text is technically correct.
+- **Clean inert config inside hunks the diff already rewrites** — stale entries cost nothing to remove and confuse every later reader; "minimize the diff" is the wrong tiebreaker there, and remains the right one for untouched files.
+- **Docstrings and comments are prose surface too — beware dual-use terms.** Words that are both colloquial English and load-bearing technical terms near the code in question ("nested", "index", or "keyword" near a search-engine mapping) pattern-match as true for an author who holds both facts.
+- **A plain-type docstring is wrong when `None` is a semantic state.** Documenting optional parameters with bare types is fine while `None` merely means "not provided"; when `None` is a meaningful third state (a sentinel selecting "inherit" or "auto"), document the union type and the sentinel's meaning, reading the entry as a naive caller who doesn't share your context.
+
+### Nothing is pre-verified
+
+Code that *feels* already-reviewed — or exempt from review — has zero review coverage. Five disguises:
+
+- **Moved code.** A "pure move" is a claim about behavior preservation, not an exemption from review — read extractions cold, and be *more* suspicious when a hunk gains callers than when it changes logic.
+- **Extracted helpers.** A helper promoted out of a call site inherits none of that site's implicit guarantees: it needs its own eager input validation and its own docstring↔behavior check, even when every current caller happens to be safe.
+- **Fixes made during review.** Touching one direction of a paired protocol (`__getstate__`↔`__setstate__`, save↔load, encode↔decode) obligates re-deriving the inverse direction, including version-skew inputs (old data into new code) that no current fixture produces. The review isn't done when the fixes are written.
+- **Rewritten code, for coverage.** Rewritten lines are new patch lines even when behavior is intentionally identical — error branches carried over from the old code still need tests now.
+- **Mid-incident glue.** Firefighting is not an exemption: before writing new shell/infra code mid-incident, check the file for an existing helper that already does it, and give your own inline code the same scrutiny you'd give a subagent's.
+
+### Check claims against what they range over
+
+The defects that author-side reviews miss are rarely inside one artifact — they are relations between two individually-correct places.
+
+- **When fixing one half of a contract, grep for the other half**: write↔read against the type contract, comment↔declaration, a docstring guarantee↔every statement in its scope, a UI string↔the docs naming it.
+- **Count enumerations against the code-defined set they enumerate** — derive the set from the code and count both sides; a reader can't tell an intentional subset from an omission.
+- **A quantified claim is an enumeration in disguise, and "pre-existing" triage stops applying when the diff extends its set.** A paragraph asserting something about "all the options above" becomes part of the diff the moment the diff adds options — re-derive the claim against the current diff; don't inherit an earlier pass's "pre-existing, out of scope" label.
+- **Build verification fixtures containing what the sample corpus lacks** — optional fields, injected errors, over-the-cap sizes — because an absent field makes the wrong key and the right key behave identically.
+- **Update tracking state only after the action it tracks has succeeded.** When code clears a counter, marks something done, or advances a cursor around an action that can fail (a file move, a write, a network call), do the update after the action succeeds — then walk each failure branch and ask what the state means if the action fails right there. Reviews reliably verify that cleanup *exists*; they miss *when* it runs.
+- **If something can report failure two ways, handle both ways the same.** A function that signals failure by return value in one configuration and by raised exception in another must run the same cleanup and safety logic on both paths. Find every place that raises, not just every place that returns — and remember that what happens to a raised exception depends on every caller it can propagate through.
+
+### Verify what CI enforces, not a plausible subset
+
+- **Run CI's literal commands from the repo root** — read the workflow file. When repo-wide runs are noisy because of untracked local directories, fix the exclusion in config rather than narrowing the command — a narrowed command is a different check that happens to share a name.
+- **Cover CI's gates, not just its commands.** Patch coverage corresponds to no replayable workflow command, so command-replay never asks "does a test execute every new line?" — compare coverage's missing-lines report against the diff before opening a PR.
+- **An ad hoc check that matches nothing is broken, not green.** Build one-off verification scripts to fail loudly on zero matches — a filter aimed at the wrong path or key silently produces an empty, passing-looking result. Silence is not success.
+
+### End with a fresh-context review, not a self re-read
+
+The author's "cold re-read" is never cold — it confirms the model the author already holds, which is exactly the blindness a fresh reader doesn't share. Before opening a PR, run a review pass whose reviewer has seen *only* the final diff — no plan, no conversation history, no memory of writing it (a subagent given just the diff, or an external reviewer) — and end it asking "do these hunks agree with *each other*?", not "is each hunk correct?". Triage its findings like any external review: fix what's real, push back with cited reasoning on what isn't. Two limits to design around: a fresh-context reviewer running the same model still shares its priors (convention-compliance can pass for correctness), and some defect classes are only caught by deterministic gates, not by more reading.
 
 ## Python Code Style
 
