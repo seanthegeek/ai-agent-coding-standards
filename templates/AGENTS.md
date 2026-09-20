@@ -68,9 +68,68 @@ The defects that author-side reviews miss are rarely inside one artifact — the
 - **Cover CI's gates, not just its commands.** Patch coverage corresponds to no replayable workflow command, so command-replay never asks "does a test execute every new line?" — compare coverage's missing-lines report against the diff before opening a PR.
 - **An ad hoc check that matches nothing is broken, not green.** Build one-off verification scripts to fail loudly on zero matches — a filter aimed at the wrong path or key silently produces an empty, passing-looking result. Silence is not success.
 
+### Treat outside values and pasted commands as code
+
+- **A value from outside the checkout is untrusted the moment it reaches a line that runs it.** A tag name, a ref, a CI-supplied value, a file name a user or a forge hands in: each one is data, not code, until something in the diff proves otherwise. In a Makefile recipe, read it from the environment as `$${VAR}` rather than expanding it as `$(VAR)` into recipe text, where the shell sees it before the recipe runs. In a CI workflow's `run:` step, let it reach the script through the environment or an `env:` mapping, never as a `${{ }}` expression pasted into the script body. Give it a hostile-value test — a tag or file name carrying shell metacharacters, which the tooling must report verbatim and never execute — because this is the defect class where a passing test suite proves nothing.
+- **A command someone will paste is code.** Every command in the README and the docs gets typed into a real shell, often as root on a machine that cannot afford to break, so review it the way you review the code it installs. It must be safe on failure: fail the download rather than piping a half-written file onward, chain steps with `&&` so a failed step stops the next, and leave nothing half-installed behind. Explain each flag that changes what happens on failure once, the first time it appears — those are the flags someone has to understand before running the command, and they are invisible in a rendered page that only shows the happy path.
+
 ### End with a fresh-context review, not a self re-read
 
-The author's "cold re-read" is never cold — it confirms the model the author already holds, which is exactly the blindness a fresh reader doesn't share. Before opening a PR, run a review pass whose reviewer has seen *only* the final diff — no plan, no conversation history, no memory of writing it (a subagent given just the diff, or an external reviewer) — and end it asking "do these hunks agree with *each other*?", not "is each hunk correct?". Triage its findings like any external review: fix what's real, push back with cited reasoning on what isn't. Two limits to design around: a fresh-context reviewer running the same model still shares its priors (convention-compliance can pass for correctness), and some defect classes are only caught by deterministic gates, not by more reading.
+The author's "cold re-read" is never cold — it confirms the model the author already holds, which is exactly the blindness a fresh reader doesn't share. Before opening a PR, run a review pass whose reviewer has seen *only* the final diff — no plan, no conversation history, no memory of writing it (a subagent given just the diff, or an external reviewer) — and end it asking "do these hunks agree with *each other*?", not "is each hunk correct?". Triage its findings like any external review: fix what's real, push back with cited reasoning on what isn't. Two limits to design around: a fresh-context reviewer running the same model still shares its priors (convention-compliance can pass for correctness), and some defect classes are only caught by deterministic gates, not by more reading. Running the last round on a different model from the earlier rounds is the cheapest answer to the first limit.
+
+- **The prompt is bare.** The reviewer's prompt is the verbatim text in "The fresh-context review prompt", below, and the working agent adds no change-specific questions to it. A checklist written by the author of the change points the reviewer at what the author already thought of, which is the opposite of what a fresh reader is for. Anything specific the author wants checked goes in the PR description for the human reviewer, or is checked by the author directly.
+- **Rounds repeat until a pass finds nothing beyond wording** (a rewrap, a sentence that says the same true thing less well); those are fixed without another round. A finding that changes what runs, what someone would copy and run, or what a sentence claims about the code or a source it cites gets another round. A sentence that is wrong is in that second group however small the edit, because a reader acts on these documents.
+- **Scoping is per reviewer, not per round number.** Every round runs in fresh context, so what a reviewer remembers never decides how much of the diff it reads; the same reviewer means the same model reviewing this change again. A later round by the same reviewer is scoped: the header names the files changed since that reviewer's previous round, and that reviewer reads those whole and the rest of the diff only for agreement with them, resting on the author's word that an earlier round by that same reviewer covered the rest, so a fix that adds new surface is reviewed in full without the whole diff being re-read every time. A reviewer that no earlier round used gets no files-changed line and reads the whole diff, however many rounds another model has already run — otherwise the reviewer brought in precisely because it is a different model would be handed only the last wording fix.
+- **A Copilot round with zero findings on the final commit, suppressed comments included, is part of "done."** [Copilot code review reads AGENTS.md and CLAUDE.md too](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review#customizing-copilots-reviews-with-custom-instructions), so it is not unprompted; it is required because it did not write the change and sees only the PR, not the session. Copilot's suppressed findings have no inline thread to reply on, so answer those in a PR-level comment that quotes them.
+
+### The fresh-context review prompt
+
+Hand this to the reviewer exactly as written, with two edits and no others: the branch base in the diff command, if it is not `origin/main`, and the bracketed list of checks, which each project replaces with its own commands. The one addition allowed is the one-line header naming the repository path and branch and, from a reviewer's second round on, the files changed since that reviewer's previous round.
+
+Before handing it over, commit every fix. The diff command compares commits, so an uncommitted fix is invisible to the reviewer, and `git status --porcelain` must print nothing. Then run `git fetch origin`: the command names `origin/main`, the fetched base, because a fetch never moves the local `main`, and a merge base taken from a stale local branch would put already-merged commits into the review.
+
+```text
+You are reviewing the diff `git diff origin/main...HEAD` of this
+repository, and you have seen none of the work that produced it. Read
+AGENTS.md from the checkout first, then read every changed file whole,
+not just the diff hunks. This is a read-only review: run [the linter and
+the test suite, the slower suites AGENTS.md's Testing section names when
+the diff touches what they cover, and the documentation checks when the
+diff touches prose]; and do not change any file.
+
+Your job is to find what is wrong, not to confirm that the change works.
+Security comes first, but it is not the whole job: treat every value that
+comes from outside the repository as hostile until proven otherwise,
+treat every claim in prose or a comment as unverified until you have
+checked it against the code or the source it cites, and remember what
+this code does in the hands of the people who run it. A review that finds
+nothing still has to say what it looked for and could not find; it never
+just says the diff is fine.
+
+Ask whether the hunks agree with each other, not only whether each hunk
+is correct on its own. If the header names files changed since a
+previous review round, read those whole and the rest of the diff only
+for agreement with them; an earlier round has covered the rest.
+
+Assume the diff contains at least one place where a value from outside
+the repository reaches a line that runs it unescaped, at least one
+command someone would copy and run that misbehaves on failure, and at
+least one sentence in prose or a comment that the code or a source it
+cites contradicts. Find them, or say plainly why you could not.
+
+For each finding, give the file and line, what is wrong, why it matters
+to the people who run this, and the concrete fix. Label it "substantive"
+(it changes what runs, what someone would copy and run, or what a
+sentence claims about the code or a source it cites; a sentence that is
+wrong is substantive however small the fix) or "wording" (the text stays
+true and only reads better), so the author can tell whether another round
+is owed. Say explicitly what checks out clean, and list anything you
+could not verify.
+
+End with a verdict: mergeable as is, mergeable after the listed fixes, or
+not mergeable, with the fixes in the order to apply them. Do not fix
+anything yourself.
+```
 
 ## Python Code Style
 
